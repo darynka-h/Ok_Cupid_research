@@ -1,0 +1,551 @@
+---
+title: "Ok Cupid research"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Project description
+
+**Team members**: Пясковська Анна, Шопʼяк Соломія, Ганноченко Дарʼя, Швець Тетяна
+
+**Data set:** [OkCupid Profiles](https://www.kaggle.com/datasets/andrewmvd/okcupid-profiles/data)
+
+**Variables available for analysis**:
+
+-   Categorical: relationship status, gender, orientation, body type, diet(vegetarian, vegan, mostly anything), drinks, education, ethnicity(asian, hispanic, latin),  job(artistic, computer, banking, sales), location, offspring(does/doesn’t have kids, does/doesn’t want kids), pets, religion, sign(astrological sign), smoking.
+
+-   Numerical: age, income, height.
+
+**Goal of the Project**: The goal of this project is to analyze the OkCupid Profiles data set to explore tendencies and relationships in user behavior on the dating app. Specifically, we aim to test four hypotheses about fitness, income and age variation among users. These insights will help understand people in dating apps what to expect from people with different characteristics.
+
+------------------------------------------------------------------------
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(EnvStats)
+library(tidyr)
+library(stringr)
+
+data <- read.csv("okcupid_profiles 4.csv")
+```
+
+## 1. Willingness of Offspring Comparison
+
+```{r}
+teo_data <- data %>%
+  mutate(
+    religion_category = case_when(
+      grepl("agnosticism|atheism|not too serious", religion, ignore.case = TRUE) ~ "non-religious",
+      grepl("christianity|judaism|islam|serious", religion, ignore.case = TRUE) ~ "religious",
+      TRUE ~ NA_character_
+    )
+  )
+
+filtered_data <- teo_data %>%
+  filter(
+    offspring %in% c(
+      "doesn't have kids, but wants them", 
+      "has a kid, and wants more",
+      "doesn't want kids", 
+      "doesn't have kids, and doesn't want any"
+    )
+  )
+
+summary <- filtered_data %>%
+  mutate(
+    wants_kids = offspring %in% c("doesn't have kids, but wants them", "has a kid, and wants more")
+  ) %>%
+  group_by(religion_category) %>%
+  summarize(
+    total_count = n(),
+    wants_kids_count = sum(wants_kids, na.rm = TRUE),
+    wants_kids_percentage = (wants_kids_count / total_count) * 100
+  )
+
+
+summary
+
+ggplot(summary, aes(x = religion_category, y = wants_kids_percentage, fill = religion_category)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Percentage of People Who Want Kids by Religion Category",
+    x = "Religion Category",
+    y = "Percentage (%)"
+  ) +
+  theme_minimal()
+
+```
+
+### Test Willingness of Offspring
+
+-   $H_0$: The proportion of people willing to have kids is the same for religious and non-religious users;
+-   $H_1$: Religious users are willing to have kids more than non-religious.
+
+In this case, we are analyzing two categorical variables — **religion** and **offspring**. To determine whether there is a relationship between these variables, we use the Chi-squared test, which is designed for determining relationship in categorical data.
+
+```{r}
+cleaned_data <- filtered_data %>%
+  filter(!is.na(religion_category))
+
+contingency_table <- cleaned_data %>%
+  mutate(
+    wants_kids = offspring %in% c("doesn't have kids, but wants them", "has a kid, and wants more")
+  ) %>%
+  group_by(religion_category, wants_kids) %>%
+  summarize(count = n(), .groups = "drop") %>%
+  pivot_wider(names_from = wants_kids, values_from = count, values_fill = 0)
+
+contingency_table <- as.data.frame(contingency_table)
+rownames(contingency_table) <- contingency_table$religion_category
+contingency_table <- as.matrix(contingency_table[, -1])
+
+colnames(contingency_table) <- c("Doesn't Want Kids", "Wants Kids")
+
+cat("Contingency Table:\n")
+contingency_table
+
+chi_sq_test <- chisq.test(contingency_table)
+
+cat("\nChi-squared Test Results:\n")
+chi_sq_test
+
+```
+
+The p-value from the test is $2.2×10^{-16}$, which is significantly less than the significance level 0.05. Thus, we reject the null hypothesis. This means that the proportion of people willing to have kids is not the same for religious and non-religious users.
+
+Even from the visual representation, we observe a clear difference: only **38.9%** of non-religious people want to have children, compared to **61.9%** of religious people. This supports conclusion that there is a significant association between religion and willingness to have kids.
+
+## 2. Vegetarians tend to be more fit than non-vegetarians
+
+After looking at our data we've noticed some relation between the diet of an individual and their body type, specifically that vegetarians tend to be more fit than non-vegetarians.
+
+### Data preparation and visualization
+
+```{r}
+unique(data$body_type)
+unique(data$diet)
+```
+
+For simplicity we assign each category of body_type a numeric value, ranging from "overweight" being 1 to "fit" being 5.
+
+```{r}
+fitness_levels <- c("fit" = 5, "athletic" = 4, "thin" = 3, "average" = 2, 
+                    "a little extra" = 1, "curvy" = 1, "full figured" = 1, 
+                    "overweight" = 1, "skinny" = 3, "jacked" = 4)
+```
+
+As for diet, we consider all vegan related categories as "Vegetarian" and all "ordinary diet" categories as "Non-Vegetarian".
+
+```{r}
+data_2 <- data %>%
+  mutate(
+    body_type_numeric = fitness_levels[body_type],
+    diet_category = case_when(
+      diet %in% c("vegan", "strictly vegetarian", "mostly vegetarian",
+                  "strictly vegan", "mostly vegan", "vegetarian") ~ "Vegetarian",
+      diet %in% c("strictly anything", "anything", "mostly anything") ~ "Non-Vegetarian",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(body_type_numeric), !is.na(diet_category))
+
+vegetarians <- filter(data_2, diet_category == "Vegetarian")$body_type_numeric
+non_vegetarians <- filter(data_2, diet_category == "Non-Vegetarian")$body_type_numeric
+```
+
+```{r}
+ggplot(data_2, aes(x = diet_category, y = body_type_numeric)) +
+  geom_boxplot() +
+  labs(title = "Fitness Levels by Diet", x = "Diet Category", y = "Fitness Level")
+```
+
+From the box plot we see that both vegetarians and non-vegetarians body type distributions are centered around the same value of approximately 3, however vegetarians body type distribution seems to be more right skewed. We also can observe that on higher values of fitness vegetarians has higher representation than non-vegetarians.
+
+### Constructing a test
+
+To test whether vegetarians tend to be more fit than non-vegetarians, we suggest to consider the following hypotheses: $H_0: \mu_{veg} = \mu_{ord}$ vs $H_1: \mu_{veg} \ge \mu_{ord}$.
+
+Or in other words:
+
+-   $H_0$: The average level of fitness is the same for vegetarians and non-vegetarians;
+-   $H_1$: The average level of fitness is higher for vegetarians than non-vegetarians.
+
+Since the variance is unknown we can use a t-test with the following t-statistics:
+
+$$t(x,y) := \sqrt{\frac{mn}{m+n}}\sqrt{\frac{n+m-2}{S_{xx}+S_{yy}}}(\bar{X}-\bar{Y}) \sim \mathscr{T}_{n+m-2}$$
+
+Let $X$ denote level of fitness of a vegetarian and $Y$ - of a non-vegetarian. Then here we consider the difference of sample means $\bar{X} - \bar{Y}$ and normalize it by subtracting the mean (which is 0) and dividing by standard deviation, but since variance is unknown we use an estimator of sigma: $\frac{S_{xx}+S_{yy}}{n+m-2}$.
+
+To be able to run a test two main assumptions has to be held:
+
+-   $X$ and $Y$ are normally distributed
+-   $X$ and $Y$ have the same variance
+
+**Normality**: while we cannot state that $X$ and $Y$ are normally distributed (they are probably not), we can look at our test statistics and see that it is constructed via sample means. By CLT on large sample size sample mean is approximately normally distributed, so we can say that normality holds.
+
+**Homogeneity of variances**: to figure whether this assumption holds we suggest running an f-test: $H_0: \sigma^2_x = \sigma^2_y$ vs $H_1: \sigma^2_x \ne \sigma^2_y$.
+
+Using estimators for variances $\hat{\sigma^2_x} := \frac{S_{xx}}{n-1}$, $\hat{\sigma^2_y} := \frac{S_{yy}}{m-1}$ and considering the ratio of those two we can construct a test statistics:
+
+$$f(x,y) := \frac{S_{xx}(m-1)}{(n-1)S_{yy}} \sim \mathscr{F}_{n-1, m-1}$$
+
+```{r}
+var.test(vegetarians, non_vegetarians)
+```
+
+We've obtained ratio of variances very close to 1 and a p-value greater than 0.05, which means that we fail to reject the null hypothesis and that variances of two samples are approximately equal. So homogeneity holds too.
+
+Now we can run a t-test described earlier.
+
+### Running a test
+
+```{r}
+t.test(vegetarians, non_vegetarians, alternative = "greater", var.equal = TRUE)
+```
+
+### Conclusion
+
+We see that p-value for our t-test is less than 0.05, meaning that we reject $H_0$ (the average level of fitness is the same for vegetarians and non-vegetarians) and, thus, make a conclusion that **level of fitness is on average higher for vegetarians than non-vegetarians**.
+
+## 3. Linear Regression
+
+```{r}
+cleaned_data <- subset(data, income > 0)
+
+religions <- c("agnosticism", "atheism", "buddhism", "christianity", "islam", "hinduism", "judaism", "other")
+religion_df <- data.frame(matrix(ncol = length(religions), nrow = nrow(cleaned_data)))
+colnames(religion_df) <- religions
+
+for (religion in religions) {
+  column_name <- gsub(" ", "_", religion)
+  
+  if (religion == "christianity") {
+    religion_df[[column_name]] <- ifelse(grepl("catholicism", cleaned_data$religion, ignore.case = TRUE) | 
+                                         grepl("christianity", cleaned_data$religion, ignore.case = TRUE), 1, 0)
+  } else if (religion == "other") {
+    religion_df[[column_name]] <- ifelse(is.na(cleaned_data$religion) | cleaned_data$religion == "", 1, 0)
+  } else {
+    religion_df[[column_name]] <- ifelse(grepl(religion, cleaned_data$religion, ignore.case = TRUE), 1, 0)
+  }
+}
+
+religion_df <- religion_df %>% select(everything())
+write.csv(religion_df, "output_religion_strong_1_0.csv", row.names = FALSE)
+```
+
+```{r}
+cleaned_data <- subset(data, income > 0)
+cleaned_data <- cleaned_data %>%
+  mutate(
+    job_artistic = ifelse(job == "artistic / musical / writer", 1, 0),
+    job_computer = ifelse(job == "computer / hardware / software", 1, 0),
+    job_medicine = ifelse(job == "medicine / health", 1, 0),
+    job_sales = ifelse(job == "sales / marketing / biz dev", 1, 0),
+    job_science = ifelse(job == "science / tech / engineering", 1, 0)
+  )
+
+cleaned_data <- cleaned_data %>%
+  mutate(
+    location_alameda = ifelse(location == "alameda, california", 1, 0),
+    location_berkeley = ifelse(location == "berkeley, california", 1, 0),
+    location_oakland = ifelse(location == "oakland, california", 1, 0),
+    location_palo_alto = ifelse(location == "palo alto, california", 1, 0),
+    location_san_francisco = ifelse(location == "san francisco, california", 1, 0)
+  )
+
+cleaned_data <- cleaned_data %>%
+  mutate(
+    languages_count = str_split(speaks, ",") %>%
+      lapply(function(x) x[!str_detect(x, "c\\+\\+|other")]) %>%
+      sapply(length)
+  )
+
+numeric_data <- cleaned_data %>%
+  select(
+    income, job_artistic, job_computer, job_medicine, job_sales, job_science,
+    location_alameda, location_berkeley, location_oakland, location_palo_alto, location_san_francisco,
+    languages_count
+  )
+
+numeric_data <- cbind(numeric_data, religion_df)
+
+write.csv(numeric_data, "numerical_data.csv", row.names = FALSE)
+```
+
+## Multiple Linear Regression Analysis
+
+We will model the relationship between one dependent variable (income) and independent variables (job, location). The goal is to understand how changes in the independent variables are associated with changes in the dependent variable.
+
+1.  The multiple linear regression model can be represented as: $$
+    Y = \beta_0 + \beta_1X_1 + \beta_2X_2 + \dots + \beta_kX_k + \epsilon
+    $$
+    -   $Y$: Dependent variable (income, in our case).
+    -   $X_1, X_2, \dots, X_k$: Independent variables (predictors: job, location).
+    -   $\beta_0$: Intercept, representing the expected value of $Y$ when all $X$'s are 0.
+    -   $\beta_1, \beta_2, \dots, \beta_k$: Slopes, indicating the change in $Y$ for a one-unit increase in $X$, holding all other variables constant.
+    -   $\epsilon$: Error term, accounting for variability in $Y$ not explained by the predictors.
+    -   P-value ($Pr(>|t|)$): Indicates whether a coefficient is statistically significant. A small $p$-value (typically \< 0.05) suggests the predictor has a significant effect on $Y$.
+    -   Standard Error: Measures the accuracy of the coefficient estimates.
+    -   t-value: The test statistic for evaluating the null hypothesis that $\beta_i = 0$.
+    -   R-squared ($R^2$): Proportion of the variance in $Y$ explained by the predictors. Higher values indicate better model fit.
+    -   Adjusted $R^2$: Adjusted for the number of predictors; penalizes for adding predictors that do not improve the model significantly.
+    -   F-statistic: Tests whether the overall regression model is significant.
+
+### Variables
+
+### **Dependent Variable**:
+
+-   **income**: Numeric variable representing the income of individuals.
+
+### **Independent Variables (Predictors)**:
+
+-   **gender**:
+    -   `1`: Male
+    -   `0`: Female
+
+#### **Job Types** (Binary Variables):
+
+-   **job_artistic**:
+    -   `1`: Individual works in an artistic profession.
+    -   `0`: Individual does not work in an artistic profession.
+-   **job_medicine**:
+    -   `1`: Individual works in medicine.
+    -   `0`: Individual does not work in medicine.
+-   **job_sales**:
+    -   `1`: Individual works in marketing.
+    -   `0`: Individual does not work marketing.
+-   **job_computer**:
+    -   `1`: Individual works in a computer-related profession.
+    -   `0`: Individual does not work in a computer-related profession.
+-   **job_science**:
+    -   `1`: Individual is a scientist.
+    -   `0`: Individual is not a scientist.
+
+#### **Location** (Binary Variables):
+
+-   **location_san_francisco:**
+    -   `1`: Individual lives in San_francisco.
+    -   `0`: Individual does not live in San_francisco.
+-   **location_palo_alto:**
+    -   `1`: Individual lives in Palo alto.
+    -   `0`: Individual does not live in Palo alto.
+-   **location_oakland:**
+    -   `1`: Individual lives in Oakland.
+    -   `0`: Individual does not live in Oakland.
+-   **location_berkeley**:
+    -   `1`: Individual lives in Berkeley.
+    -   `0`: Individual does not live in Berkeley.
+-   **location_alameda:**
+    -   `1`: Individual lives in Alameda.
+    -   `0`: Individual does not live in Alameda.
+
+#### **Religion** (Binary Variables):
+
+-   **agnosticism**:
+    -   `1`: Individual professes agnosticism.
+    -   `0`: Individual doesn't professes agnosticism.
+-   **atheism**:
+    -   `1`: Individual professes atheism.
+    -   `0`: Individual doesn't professes atheism.
+-   **buddhism**:
+    -   `1`: Individual professes buddhism.
+    -   `0`: Individual doesn't professes buddhism.
+-   **christianity**:
+    -   `1`: Individual professes christianity.
+    -   `0`: Individual doesn't professes christianity.
+-   **islam**:
+    -   `1`: Individual professes islam.
+    -   `0`: Individual doesn't professes islam.
+-   **hinduism**:
+    -   `1`: Individual professes hinduism.
+    -   `0`: Individual doesn't professes hinduism.
+-   **judaism**:
+    -   `1`: Individual professes judaism.
+    -   `0`: Individual doesn't professes judaism.
+
+### **Important Notes**:
+
+1.  In linear regression, when we have categorical variables with multiple levels, one category is always excluded to avoid a problem known as multicollinearity. Because when all categories are included, the variables become linearly dependent (they sum up to 1). So, variables like `job_education` and `location_emeryville` not included in the regression model and are as the baseline or reference category.
+2.  Individual can be only in one category.
+
+```{r}
+model <- lm(income ~ . - other , data = numeric_data)
+
+model_summary <- summary(model)
+model_summary
+```
+
+To make a regression that best describes the relationship, we have to leave only significant variables. So, we need to take away the variables with the lowest p-value one by one and re-ran the code, so that only the significant variables remain at the end. We can see that hinduism has the biggest p-value, so it isn't significant. We delete it and re-run regression.
+
+```{r}
+without_hinduism <- income ~ . - other - hinduism
+
+model_updated <- lm(without_hinduism, data = numeric_data)
+
+summary(model_updated)
+```
+
+```{r}
+without_buddhism <- income ~ . - other - hinduism - buddhism
+
+model_updated <- lm(without_buddhism, data = numeric_data)
+
+summary(model_updated)
+```
+
+```{r}
+without_job_computer <- income ~ . - other - hinduism - buddhism - job_computer
+
+model_updated <- lm(without_job_computer, data = numeric_data)
+
+summary(model_updated)
+```
+
+```{r}
+without_job_science <- income ~ . - other - hinduism - buddhism - job_computer - job_science
+
+model_updated <- lm(without_job_science, data = numeric_data)
+
+summary(model_updated)
+```
+
+```{r}
+without_atheism <- income ~ . - other - hinduism - buddhism - job_computer - job_science - atheism
+
+model_updated <- lm(without_atheism, data = numeric_data)
+
+summary(model_updated)
+```
+
+```{r}
+without_job_medicine <- income ~ . - other - hinduism - buddhism - job_computer - job_science - atheism - job_medicine
+
+model_updated <- lm(without_job_medicine, data = numeric_data)
+
+summary(model_updated)
+```
+
+```{r}
+without_berkeley <- income ~ . - other - hinduism - buddhism - job_computer - job_science - atheism - job_medicine - location_berkeley
+
+model_updated <- lm(without_berkeley, data = numeric_data)
+
+summary(model_updated)
+```
+
+```{r}
+without_judaism <- income ~ . - other - hinduism - buddhism - job_computer - job_science - atheism - job_medicine - location_berkeley -judaism
+
+model_updated <- lm(without_judaism, data = numeric_data)
+
+summary(model_updated)
+```
+
+```{r}
+without_alameda <- income ~ . - other - hinduism - buddhism - job_computer - job_science - atheism - job_medicine - location_berkeley -judaism -location_alameda
+
+model_updated <- lm(without_alameda, data = numeric_data)
+
+summary(model_updated)
+
+```
+
+```{r}
+without_palo_alto <- income ~ . - other - hinduism - buddhism - job_computer - job_science - atheism - job_medicine - location_berkeley -judaism -location_alameda -location_palo_alto
+
+model_updated <- lm(without_palo_alto, data = numeric_data)
+
+summary(model_updated)
+```
+
+```{r}
+without_islam <- income ~ . - other - hinduism - buddhism - job_computer - job_science - atheism - job_medicine - location_berkeley -judaism -location_alameda -location_palo_alto -islam
+
+model_updated <- lm(without_islam, data = numeric_data)
+
+summary(model_updated)
+```
+
+```{r}
+without_job_sales <- income ~ . - other - hinduism - buddhism - job_computer - job_science - atheism - job_medicine - location_berkeley -judaism -location_alameda -location_palo_alto -islam -job_sales
+
+model_updated <- lm(without_job_sales, data = numeric_data)
+
+summary(model_updated)
+```
+
+```{r}
+without_agnosticism <- income ~ . - other - hinduism - buddhism - job_computer - job_science - atheism - job_medicine - location_berkeley -judaism -location_alameda -location_palo_alto -islam -job_sales -agnosticism
+
+model_updated <- lm(without_agnosticism, data = numeric_data)
+
+summary(model_updated)
+```
+
+### Interpreting the results
+
+Although we are left with model for which all its independent variables are significant (we can see that by both the small p-values for each variable and small p-value for the whole regression model), the overall performance of our model does not seem very good.
+
+First of all, the residual standard error is very high, meaning that our model can't be considered as a good fit and that it won't be able to predict accurately enough.
+
+Secondly, the value of the determination coefficient of our model is 0.01471, which means that it explains only 1,4% of the variance in the dependent variable.
+
+Potential reasons for such results:
+
+-   in our data set income column is limited to small uneven range of values (-1, 80000, 20000, 40000, 30000, 50000, 60000, 1000000, 150000, 100000, 500000, 70000, 250000), making it hard for the model to establish the relation between dependent and independent variables
+-   there are other important factors that influence income, which we do not consider in our regression model or which are not represented in our data set
+-   the relation between income and independent variables we consider may be non-linear, as we assume
+-   it is possible that predictors we use are not independent, leading to multicollinearity, which can significantly affect the model's ability to predict
+
+## 4. Standard deviation of age among users is 9:
+
+### Data visualization
+
+```{r}
+mean_age <- mean(data$age, na.rm = TRUE)
+hist(data$age,
+     main = "Age Distribution",
+     xlab = "Age",
+     ylab = "Frequency",
+     col = "gold",
+     border = "black",
+     breaks = 65)
+
+abline(v = mean_age, 
+       col = "maroon",
+       lwd = 2,
+       lty = 2)
+
+legend("topright", 
+       legend = paste("Mean"), 
+       col = "maroon", 
+       lty = 2, 
+       lwd = 2)
+
+```
+
+### Constructing a test
+
+$H_0$ :The population standard deviation of age = 9.
+
+$H_1$ :The population standard deviation of age $\not=$ 9.
+
+if population mean of age is unknown.
+
+To construct our two-sided test we consider the estimate $\bar{X}$ instead of $\mu$ and can get test statistics $$V(X) = \frac{S_{XX}}{\sigma^2_0}$$ which under $H_0$ has $Chi-squared$ distribution with $n-1$ degrees of freedom.
+
+### Running a test
+
+```{r}
+result <- varTest(data$age, alternative = "two.sided", sigma.squared = 81)
+
+result
+```
+
+### Conclusion
+
+As we can see the p-value is less then 0,05 which means we should reject our $H_0$
+
+In conclusion variance of age in fact **isn't equal to 81**. But after testing we found its 95% Confidence Interval : $[88,35201 : 90,37532]$
